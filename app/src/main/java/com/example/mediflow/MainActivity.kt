@@ -3,13 +3,6 @@ package com.example.mediflow
 import android.content.Context
 import android.os.Bundle
 import android.app.TimePickerDialog
-import android.os.Vibrator
-import android.os.VibrationEffect
-import android.media.RingtoneManager
-import android.app.NotificationManager
-import android.app.NotificationChannel
-import androidx.core.app.NotificationCompat
-import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -1508,13 +1501,11 @@ fun AjustesScreen(
     when (subMenu) {
         "Perfil" -> PerfilSubScreen(userProfile, onUpdateProfile) { subMenu = null }
         "Tema" -> TemaSubScreen(themeSetting, appColor, onThemeChange, onColorChange) { subMenu = null }
-        "Notificaciones" -> NotificacionesSubScreen { subMenu = null }
         "HistorialMedico" -> HistorialMedicoSubScreen(historialMedico, listaMedicamentos, historial, todasLasNotas, onUpdateMedicamento, onNavigateToInicio) { subMenu = null }
         else -> Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
             Text("Configuración", fontWeight = FontWeight.ExtraBold, fontSize = 28.sp); Spacer(Modifier.height(32.dp))
             AjusteItem("Perfil", "Nombre, Edad", Icons.Default.Person) { subMenu = "Perfil" }
             AjusteItem("Tema y Color", "Visualización de la app", Icons.Default.Palette) { subMenu = "Tema" }
-            AjusteItem("Notificaciones", "Sonido, Vibración y Recordatorios", Icons.Default.Notifications) { subMenu = "Notificaciones" }
             AjusteItem("Historial Médico", "Tratamientos previos y notas", Icons.Default.MedicalServices) { subMenu = "HistorialMedico" }
             Spacer(Modifier.weight(1f)); Text("MediFlow v1.5", color = Color.Gray, modifier = Modifier.align(Alignment.CenterHorizontally))
         }
@@ -1647,111 +1638,6 @@ fun TemaSubScreen(current: String, color: Long, onTheme: (String) -> Unit, onCol
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun NotificacionesSubScreen(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("mediflow_prefs", Context.MODE_PRIVATE) }
-    
-    var soundEnabled by remember { mutableStateOf(prefs.getBoolean("notif_sound", true)) }
-    var vibrateEnabled by remember { mutableStateOf(prefs.getBoolean("notif_vibrate", true)) }
-    var reminderTime by remember { mutableIntStateOf(prefs.getInt("reminder_time", 5)) }
-    
-    val reminderOptions = listOf(5, 10, 15, 30)
-
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { 
-            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
-            Text("Notificaciones", fontWeight = FontWeight.Bold, fontSize = 20.sp) 
-        }
-        Spacer(Modifier.height(24.dp))
-
-        // Sonido
-        ListItem(
-            headlineContent = { Text("Sonido de alarma") },
-            trailingContent = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = soundEnabled, onCheckedChange = { 
-                        soundEnabled = it
-                        prefs.edit().putBoolean("notif_sound", it).apply()
-                    })
-                    Spacer(Modifier.width(8.dp))
-                    IconButton(onClick = {
-                        val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-                        val r = RingtoneManager.getRingtone(context, notification)
-                        r.play()
-                    }) { Icon(Icons.Default.PlayArrow, contentDescription = "Probar sonido") }
-                }
-            }
-        )
-        HorizontalDivider()
-
-        // Vibración
-        ListItem(
-            headlineContent = { Text("Vibración") },
-            trailingContent = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = vibrateEnabled, onCheckedChange = { 
-                        vibrateEnabled = it
-                        prefs.edit().putBoolean("notif_vibrate", it).apply()
-                    })
-                    Spacer(Modifier.width(8.dp))
-                    IconButton(onClick = {
-                        val v = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            v.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
-                        } else {
-                            v.vibrate(500)
-                        }
-                    }) { Icon(Icons.Default.Vibration, contentDescription = "Probar vibración") }
-                }
-            }
-        )
-        HorizontalDivider()
-
-        // Recordatorio
-        Column(modifier = Modifier.padding(vertical = 16.dp)) {
-            Text("Recordatorio previo:", fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                reminderOptions.forEach { mins ->
-                    FilterChip(
-                        selected = reminderTime == mins,
-                        onClick = { 
-                            reminderTime = mins
-                            prefs.edit().putInt("reminder_time", mins).apply()
-                        },
-                        label = { Text("${mins} min") }
-                    )
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = {
-                    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    val channelId = "mediflow_test_channel"
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        val channel = NotificationChannel(channelId, "MediFlow Test", NotificationManager.IMPORTANCE_DEFAULT)
-                        notificationManager.createNotificationChannel(channel)
-                    }
-                    val builder = NotificationCompat.Builder(context, channelId)
-                        .setSmallIcon(android.R.drawable.ic_dialog_info)
-                        .setContentTitle("MediFlow")
-                        .setContentText("¡Es hora de tu medicamento! (Recordatorio de ${reminderTime} min)")
-                        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                    
-                    notificationManager.notify(1, builder.build())
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(50.dp)
-            ) {
-                Icon(Icons.Default.NotificationsActive, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Probar Notificación")
             }
         }
     }

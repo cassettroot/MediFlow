@@ -45,6 +45,15 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.draw.clip
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import android.os.Vibrator
+import android.os.VibrationEffect
+import android.media.RingtoneManager
+import android.os.Build
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +61,30 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val context = LocalContext.current
+            
+            // Notification Permission Request
+            var hasNotificationPermission by remember {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    mutableStateOf(
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED
+                    )
+                } else mutableStateOf(true)
+            }
+
+            val permissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission(),
+                onResult = { isGranted -> hasNotificationPermission = isGranted }
+            )
+
+            LaunchedEffect(Unit) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+
             val prefs = remember { context.getSharedPreferences("mediflow_prefs", Context.MODE_PRIVATE) }
             
             var userProfile by remember {
@@ -294,13 +327,17 @@ fun MediFlowApp(
                     historialMedico,
                     todasLasNotas,
                     onNavigateToAgregar = { selectedTab = Screen.Agregar },
-                    onUpdateMedicamento = { safeUpdateMed(it) }
+                    onUpdateMedicamento = { 
+                        safeUpdateMed(it)
+                        AlarmScheduler.scheduleAlarms(context, it)
+                    }
                 )
                 Screen.Agregar -> AgregarMedicamentoScreen(
                     listaExistente = listaMedicamentos.toList(),
                     gruposExistentes = gruposGuardados.toList(),
                     onMedicamentoGuardado = { nuevo, registrarToma, gNombre, gColor, mColor ->
                         listaMedicamentos.add(nuevo)
+                        AlarmScheduler.scheduleAlarms(context, nuevo)
                         if (registrarToma) {
                            // Lógica para registrar primera toma
                            val now = System.currentTimeMillis()
@@ -310,6 +347,7 @@ fun MediFlowApp(
                                 lastTakenTimestamp = now
                            )
                            safeUpdateMed(updated)
+                           AlarmScheduler.scheduleAlarms(context, updated)
                            val sdf = SimpleDateFormat("HH:mm - dd MMM", Locale.getDefault())
                            historial.add(0, RegistroToma(
                                medicamentoId = nuevo.id,
@@ -343,7 +381,10 @@ fun MediFlowApp(
                     listaMedicamentos = listaMedicamentos,
                     historial = historial,
                     todasLasNotas = todasLasNotas,
-                    onUpdateMedicamento = { safeUpdateMed(it) },
+                    onUpdateMedicamento = { 
+                        safeUpdateMed(it)
+                        AlarmScheduler.scheduleAlarms(context, it)
+                    },
                     onNavigateToInicio = { selectedTab = Screen.Inicio }
                 )
             }
@@ -1576,17 +1617,39 @@ fun AjustesScreen(
     onNavigateToInicio: () -> Unit
 ) {
     var subMenu by remember { mutableStateOf<String?>(null) }
+    var secretClickCount by remember { mutableIntStateOf(0) }
+    var isTestMenuVisible by remember { mutableStateOf(false) }
 
     when (subMenu) {
         "Perfil" -> PerfilSubScreen(userProfile, onUpdateProfile) { subMenu = null }
         "Tema" -> TemaSubScreen(themeSetting, appColor, onThemeChange, onColorChange) { subMenu = null }
+        "Notificaciones" -> NotificacionesSubScreen { subMenu = null }
+        "Test" -> TestSubScreen { subMenu = null }
         "HistorialMedico" -> HistorialMedicoSubScreen(historialMedico, listaMedicamentos, historial, todasLasNotas, onUpdateMedicamento, onNavigateToInicio) { subMenu = null }
         else -> Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
             Text("Configuración", fontWeight = FontWeight.ExtraBold, fontSize = 28.sp); Spacer(Modifier.height(32.dp))
             AjusteItem("Perfil", "Nombre, Edad", Icons.Default.Person) { subMenu = "Perfil" }
             AjusteItem("Tema y Color", "Visualización de la app", Icons.Default.Palette) { subMenu = "Tema" }
+            AjusteItem("Notificaciones", "Sonido, Vibración y Recordatorios", Icons.Default.Notifications) { subMenu = "Notificaciones" }
             AjusteItem("Historial Médico", "Tratamientos previos y notas", Icons.Default.MedicalServices) { subMenu = "HistorialMedico" }
-            Spacer(Modifier.weight(1f)); Text("MediFlow v1.5", color = Color.Gray, modifier = Modifier.align(Alignment.CenterHorizontally))
+            
+            if (isTestMenuVisible) {
+                AjusteItem("Test de Funciones", "Prueba sonido y vibración", Icons.Default.BugReport) { subMenu = "Test" }
+            }
+
+            Spacer(Modifier.weight(1f))
+            Text(
+                "MediFlow v1.5", 
+                color = Color.Gray, 
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .clickable {
+                        secretClickCount++
+                        if (secretClickCount >= 4) {
+                            isTestMenuVisible = true
+                        }
+                    }
+            )
         }
     }
 }
@@ -1651,6 +1714,106 @@ fun PerfilSubScreen(user: UserProfile, onUpdate: (UserProfile) -> Unit, onBack: 
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Guardar Cambios") }
+    }
+}
+
+@Composable
+fun NotificacionesSubScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("mediflow_prefs", Context.MODE_PRIVATE) }
+    
+    var soundEnabled by remember { mutableStateOf(prefs.getBoolean("notif_sound", true)) }
+    var vibrateEnabled by remember { mutableStateOf(prefs.getBoolean("notif_vibrate", true)) }
+    var reminderTime by remember { mutableIntStateOf(prefs.getInt("reminder_time", 15)) }
+    
+    val reminderOptions = listOf(5, 10, 15, 30)
+
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) { 
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
+            Text("Notificaciones", fontWeight = FontWeight.Bold, fontSize = 20.sp) 
+        }
+        Spacer(Modifier.height(24.dp))
+
+        ListItem(
+            headlineContent = { Text("Sonido de alarma") },
+            trailingContent = {
+                Switch(checked = soundEnabled, onCheckedChange = { 
+                    soundEnabled = it
+                    prefs.edit().putBoolean("notif_sound", it).apply()
+                })
+            }
+        )
+        HorizontalDivider()
+
+        ListItem(
+            headlineContent = { Text("Vibración") },
+            trailingContent = {
+                Switch(checked = vibrateEnabled, onCheckedChange = { 
+                    vibrateEnabled = it
+                    prefs.edit().putBoolean("notif_vibrate", it).apply()
+                })
+            }
+        )
+        HorizontalDivider()
+
+        Spacer(Modifier.height(16.dp))
+        Text("Recordatorio previo:", fontWeight = FontWeight.Medium)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            reminderOptions.forEach { mins ->
+                FilterChip(
+                    selected = reminderTime == mins,
+                    onClick = { 
+                        reminderTime = mins
+                        prefs.edit().putInt("reminder_time", mins).apply()
+                    },
+                    label = { Text("${mins} min") }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun TestSubScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) { 
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
+            Text("Test de Funciones", fontWeight = FontWeight.Bold, fontSize = 20.sp) 
+        }
+        Spacer(Modifier.height(24.dp))
+
+        Button(
+            onClick = {
+                val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                val r = RingtoneManager.getRingtone(context, notification)
+                r.play()
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.PlayArrow, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Probar Sonido de Alarma")
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Button(
+            onClick = {
+                val v = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    v.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    v.vibrate(500)
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.Vibration, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Probar Vibración")
+        }
     }
 }
 

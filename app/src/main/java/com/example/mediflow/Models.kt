@@ -33,7 +33,9 @@ data class RegistroToma(
     val fechaHora: String,
     val colorHex: Long,
     val isEarly: Boolean = false,
-    val grupoNombre: String? = null
+    val grupoNombre: String? = null,
+    val timestamp: Long = System.currentTimeMillis(),
+    val isUndoRecord: Boolean = false
 )
 
 data class Nota(

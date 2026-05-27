@@ -317,7 +317,8 @@ fun MediFlowApp(
                                fechaHora = sdf.format(Date(now)),
                                colorHex = nuevo.colorHex,
                                isEarly = false,
-                               grupoNombre = nuevo.grupo
+                               grupoNombre = nuevo.grupo,
+                               timestamp = now
                            ))
                         }
                         if (gNombre != null && !gruposGuardados.any { it.first == gNombre }) {
@@ -497,8 +498,44 @@ fun MisTomasScreen(
                                                     fechaHora = sdf.format(Date(now)),
                                                     colorHex = med.colorHex,
                                                     isEarly = isEarly,
-                                                    grupoNombre = med.grupo
+                                                    grupoNombre = med.grupo,
+                                                    timestamp = now
                                                 ))
+                                            },
+                                            onUndo = {
+                                                if (med.dosisActual > 0) {
+                                                    val previousTakes = historial.filter { it.medicamentoId == med.id && !it.isUndoRecord }
+                                                    if (previousTakes.isNotEmpty()) {
+                                                        val lastToma = previousTakes.first()
+                                                        val newLastTakenTimestamp = if (previousTakes.size > 1) previousTakes[1].timestamp else null
+                                                        
+                                                        val updated = med.copy(
+                                                            dosisActual = (med.dosisActual - 1).coerceAtLeast(0),
+                                                            stockRestante = med.stockRestante + 1,
+                                                            lastTakenTimestamp = newLastTakenTimestamp
+                                                        )
+                                                        onUpdateMedicamento(updated)
+
+                                                        // Remover del historial médico si ya se había terminado
+                                                        if (med.dosisActual >= med.dosisTotal) {
+                                                            historialMedico.removeAll { it.nombre == med.nombre && it.grupo == med.grupo }
+                                                        }
+
+                                                        // Registrar corrección en historial
+                                                        val now = System.currentTimeMillis()
+                                                        val sdf = SimpleDateFormat("HH:mm - dd MMM", Locale.getDefault())
+                                                        historial.add(0, RegistroToma(
+                                                            medicamentoId = med.id,
+                                                            nombreMedicamento = "CORRECCIÓN: ${med.nombre}",
+                                                            fechaHora = sdf.format(Date(now)),
+                                                            colorHex = med.colorHex,
+                                                            isEarly = false,
+                                                            grupoNombre = med.grupo,
+                                                            timestamp = now,
+                                                            isUndoRecord = true
+                                                        ))
+                                                    }
+                                                }
                                             },
                                             onDelete = {
                                                 lista.remove(med)
@@ -787,11 +824,13 @@ fun MedicamentoCard(
     med: Medicamento,
     onClick: () -> Unit,
     onRegistrar: (Boolean) -> Unit,
+    onUndo: () -> Unit,
     onDelete: () -> Unit
 ) {
     var showConfirmDialog by remember { mutableStateOf(false) }
     var showEarlyWarningDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showUndoDialog by remember { mutableStateOf(false) }
     val isLowStock = med.stockRestante <= 5
 
     val ticks = remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -830,6 +869,9 @@ fun MedicamentoCard(
                         Text("Siguiente en: ${String.format("%02d:%02d:%02d", nextHrs, nextMins, nextSecs)}", 
                             fontWeight = FontWeight.Bold, color = if(timeToNext == 0L) Color(0xFF4CAF50) else MaterialTheme.colorScheme.primary)
                     }
+                }
+                IconButton(onClick = { showUndoDialog = true }, enabled = med.dosisActual > 0) {
+                    Icon(Icons.Default.Undo, contentDescription = "Deshacer", tint = MaterialTheme.colorScheme.secondary)
                 }
                 IconButton(onClick = { showDeleteDialog = true }) {
                     Icon(Icons.Default.Delete, contentDescription = "Eliminar", tint = Color.Red)
@@ -897,6 +939,32 @@ fun MedicamentoCard(
             text = { Text("¿Estás seguro? Te faltaban $dosisFaltantes dosis.") },
             confirmButton = { TextButton(onClick = { onDelete(); showDeleteDialog = false }) { Text("Eliminar", color = Color.Red) } },
             dismissButton = { TextButton(onClick = { showDeleteDialog = false }) { Text("Cancelar") } }
+        )
+    }
+
+    if (showUndoDialog) {
+        AlertDialog(
+            onDismissRequest = { showUndoDialog = false },
+            title = { Text("Deshacer última toma") },
+            text = { 
+                Column {
+                    Text("Esta acción revertirá los siguientes cambios:")
+                    Spacer(Modifier.height(8.dp))
+                    Text("• El stock aumentará en 1 unidad.")
+                    Text("• El contador de dosis disminuirá.")
+                    Text("• El tiempo de la siguiente toma se recalculará.")
+                    Spacer(Modifier.height(16.dp))
+                    Text("¿Deseas confirmar la modificación de la última toma?", fontWeight = FontWeight.Bold)
+                }
+            },
+            confirmButton = { 
+                TextButton(onClick = { onUndo(); showUndoDialog = false }) { 
+                    Text("Confirmar", fontWeight = FontWeight.Bold) 
+                } 
+            },
+            dismissButton = { 
+                TextButton(onClick = { showUndoDialog = false }) { Text("Cancelar") } 
+            }
         )
     }
 }
@@ -1360,15 +1428,26 @@ fun HistorialScreen(listaMedicamentos: List<Medicamento>, historial: List<Regist
             0 -> LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (historial.isEmpty()) { item { Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { Text("Sin registros de tomas", color = Color.Gray) } } }
                 items(historial) { registro ->
-                    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp), colors = CardDefaults.cardColors(containerColor = Color(registro.colorHex).copy(alpha = 0.05f))) {
+                    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp), colors = CardDefaults.cardColors(containerColor = if(registro.isUndoRecord) Color.Gray.copy(alpha = 0.1f) else Color(registro.colorHex).copy(alpha = 0.05f))) {
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (registro.isEarly) Icons.Default.Help else Icons.Default.CheckCircle, null, tint = if (registro.isEarly) Color(0xFFFF9800) else Color(registro.colorHex))
+                            val icon = when {
+                                registro.isUndoRecord -> Icons.Default.History
+                                registro.isEarly -> Icons.Default.Help
+                                else -> Icons.Default.CheckCircle
+                            }
+                            val tint = when {
+                                registro.isUndoRecord -> Color.Gray
+                                registro.isEarly -> Color(0xFFFF9800)
+                                else -> Color(registro.colorHex)
+                            }
+                            Icon(icon, null, tint = tint)
                             Spacer(Modifier.width(12.dp))
                             Column {
-                                Text(registro.nombreMedicamento, fontWeight = FontWeight.Bold)
+                                Text(registro.nombreMedicamento, fontWeight = FontWeight.Bold, color = if(registro.isUndoRecord) Color.Gray else Color.Unspecified)
                                 Row {
                                     Text(registro.fechaHora, fontSize = 12.sp, color = Color.Gray)
-                                    if (registro.isEarly) Text(" (Antes)", fontSize = 11.sp, color = Color(0xFFFF9800), fontWeight = FontWeight.Bold)
+                                    if (registro.isEarly && !registro.isUndoRecord) Text(" (Antes)", fontSize = 11.sp, color = Color(0xFFFF9800), fontWeight = FontWeight.Bold)
+                                    if (registro.isUndoRecord) Text(" (Toma Modificada)", fontSize = 11.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }

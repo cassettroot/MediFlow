@@ -16,6 +16,7 @@ class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val medName = intent.getStringExtra("MED_NAME") ?: "Medicamento"
         val isReminder = intent.getBooleanOfDefault("IS_REMINDER", false)
+        val timeLeft = intent.getStringExtra("TIME_LEFT")
         
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "mediflow_notifications"
@@ -39,7 +40,13 @@ class AlarmReceiver : BroadcastReceiver() {
         val builder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle(if (isReminder) "Recordatorio Próximo" else "Hora de tu Medicamento")
-            .setContentText(if (isReminder) "En $reminderMins minutos: $medName" else "Es momento de tomar: $medName")
+            .setContentText(
+                when {
+                    timeLeft != null -> "Faltan $timeLeft para: $medName"
+                    isReminder -> "En $reminderMins minutos: $medName"
+                    else -> "Es momento de tomar: $medName"
+                }
+            )
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
 
@@ -57,6 +64,18 @@ class AlarmReceiver : BroadcastReceiver() {
 
         if (vibrateEnabled) {
             builder.setVibrate(longArrayOf(0, 500, 200, 500))
+        }
+
+        // Full screen intent for non-reminders
+        if (!isReminder) {
+            val fullScreenIntent = Intent(context, AlarmActivity::class.java).apply {
+                putExtra("MED_NAME", medName)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val fullScreenPendingIntent = PendingIntent.getActivity(
+                context, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            builder.setFullScreenIntent(fullScreenPendingIntent, true)
         }
 
         notificationManager.notify(medName.hashCode(), builder.build())

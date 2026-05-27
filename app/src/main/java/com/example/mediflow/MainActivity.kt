@@ -1,6 +1,7 @@
 package com.example.mediflow
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.app.TimePickerDialog
 import androidx.activity.ComponentActivity
@@ -1786,34 +1787,59 @@ fun TestSubScreen(onBack: () -> Unit) {
 
         Button(
             onClick = {
-                val notification = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                val r = RingtoneManager.getRingtone(context, notification)
-                r.play()
+                val alarmIntent = Intent(context, AlarmActivity::class.java).apply {
+                    putExtra("MED_NAME", "Test Medicamento")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(alarmIntent)
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Icon(Icons.Default.PlayArrow, null)
+            Icon(Icons.Default.Alarm, null)
             Spacer(Modifier.width(8.dp))
-            Text("Probar Sonido de Alarma")
+            Text("Probar Pantalla de Alarma")
         }
 
         Spacer(Modifier.height(16.dp))
 
         Button(
             onClick = {
-                val v = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                val intent = Intent(context, AlarmReceiver::class.java).apply {
+                    putExtra("MED_NAME", "Test Recordatorio")
+                    putExtra("IS_REMINDER", true)
+                    putExtra("TIME_LEFT", "15:00")
+                }
+                context.sendBroadcast(intent)
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.Notifications, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Probar Notificación (Tiempo restante)")
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Button(
+            onClick = {
+                val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    v.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 1000, 500, 1000), -1))
                 } else {
-                    v.vibrate(500)
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(longArrayOf(0, 1000, 500, 1000), -1)
                 }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
             Icon(Icons.Default.Vibration, null)
             Spacer(Modifier.width(8.dp))
-            Text("Probar Vibración")
+            Text("Probar Vibración (Fuerte)")
         }
+        
+        Spacer(Modifier.height(32.dp))
+        Text("Nota: Estos tests simulan el comportamiento real de la aplicación.", 
+            fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center)
     }
 }
 
